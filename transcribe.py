@@ -16,7 +16,7 @@ import time
 import argparse
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 
 import yt_dlp
@@ -619,6 +619,168 @@ def _run_v2_pipeline(
     )
     return orchestrator.run(transcript_text, prompt_names)
 
+
+def _build_toc(entries: List[Tuple[str, str]]) -> str:
+    lines = []
+    for anchor, title in entries:
+        lines.append(f"- [{title}](#{anchor})")
+    return "\n".join(lines)
+
+
+def _render_collapsible_section(text: str) -> str:
+    body = (text or "").strip()
+    if not body:
+        return "无"
+    return "\n".join(
+        [
+            "<details>",
+            "<summary>点击展开</summary>",
+            "",
+            body,
+            "",
+            "</details>",
+        ]
+    )
+
+
+def _build_single_markdown_report(
+    title: str,
+    video_url: str,
+    pipeline: str,
+    transcript_text: str,
+    optimized_texts: Dict[str, str],
+    artifacts_data: Optional[dict],
+    artifacts_meta: dict,
+    total_elapsed: float,
+) -> str:
+    app_outputs = ((artifacts_data or {}).get("application_outputs") or {}) if artifacts_data else {}
+    quick_summary = (app_outputs.get("quick_summary") or "").strip()
+    quotes = (app_outputs.get("quotes") or "").strip()
+    summary = (optimized_texts.get("summary") or "").strip()
+    evaluation = (optimized_texts.get("evaluation") or "").strip()
+    formatted_text = (optimized_texts.get("format") or "").strip()
+
+    toc_entries: List[Tuple[str, str]] = [
+        ("overview", "概览"),
+        ("toc", "目录"),
+    ]
+    if quick_summary:
+        toc_entries.append(("quick-summary", "快速摘要"))
+    if summary:
+        toc_entries.append(("summary", "详细总结"))
+    if evaluation:
+        toc_entries.append(("evaluation", "质量评估"))
+    if quotes:
+        toc_entries.append(("quotes", "金句摘录"))
+    toc_entries.extend(
+        [
+            ("stats", "处理统计"),
+            ("formatted-transcript", "净化版文本"),
+            ("raw-transcript", "原始转写"),
+        ]
+    )
+
+    parts = [
+        f"# {title}",
+        "",
+        '<a id="overview"></a>',
+        "## 概览",
+        "",
+        f"- **视频链接**: {video_url}",
+        f"- **Pipeline**: {pipeline}",
+        f"- **总耗时**: {format_time(total_elapsed)}",
+        "",
+        '<a id="toc"></a>',
+        "## 目录",
+        "",
+        _build_toc(toc_entries[2:]),
+    ]
+
+    if quick_summary:
+        parts.extend(
+            [
+                "",
+                '<a id="quick-summary"></a>',
+                "## 快速摘要",
+                "",
+                quick_summary,
+            ]
+        )
+
+    if summary:
+        parts.extend(
+            [
+                "",
+                '<a id="summary"></a>',
+                "## 详细总结",
+                "",
+                summary,
+            ]
+        )
+
+    if evaluation:
+        parts.extend(
+            [
+                "",
+                '<a id="evaluation"></a>',
+                "## 质量评估",
+                "",
+                evaluation,
+            ]
+        )
+
+    if quotes:
+        parts.extend(
+            [
+                "",
+                '<a id="quotes"></a>',
+                "## 金句摘录",
+                "",
+                quotes,
+            ]
+        )
+
+    stage_durations = artifacts_meta.get("stage_durations", {}) or {}
+    parts.extend(
+        [
+            "",
+            '<a id="stats"></a>',
+            "## 处理统计",
+            "",
+            f"- **源文本 tokens**: {artifacts_meta.get('source_tokens', 0)}",
+            f"- **净化后 tokens**: {artifacts_meta.get('cleaned_tokens', 0)}",
+            f"- **知识层 tokens**: {artifacts_meta.get('knowledge_tokens', 0)}",
+            f"- **分块数**: {artifacts_meta.get('chunk_count', 0)}",
+            f"- **平均分块 tokens**: {artifacts_meta.get('avg_chunk_tokens', 0)}",
+            f"- **应用层并行**: {'是' if artifacts_meta.get('app_parallel') else '否'}",
+            "",
+            "### 阶段耗时",
+            "",
+        ]
+    )
+    if stage_durations:
+        for stage_name, seconds in stage_durations.items():
+            parts.append(f"- **{stage_name}**: {seconds} 秒")
+    else:
+        parts.append("- 无")
+
+    parts.extend(
+        [
+            "",
+            '<a id="formatted-transcript"></a>',
+            "## 净化版文本",
+            "",
+            _render_collapsible_section(formatted_text or transcript_text),
+            "",
+            '<a id="raw-transcript"></a>',
+            "## 原始转写",
+            "",
+            _render_collapsible_section(transcript_text),
+        ]
+    )
+
+    return "\n".join(parts).strip() + "\n"
+
 # ==================== 主函数 ====================
 def process_video(
     video_url: str,
@@ -712,43 +874,32 @@ def process_video(
     timestamp = datetime.now().strftime("%y%m%d")
 
     safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_'))[:50]
+    output_prefix = f"{timestamp}_{safe_title}"
 
-    # 保存原始转写
-    raw_file = OUTPUT_DIR / f"{timestamp}_{safe_title}_raw.md"
-    with open(raw_file, "w", encoding="utf-8") as f:
-        f.write(f"# {title}\n\n")
-        f.write(f"**视频链接**: {video_url}\n\n")
-        f.write("---\n\n")
-        f.write("## 原始转写\n\n")
-        f.write(transcript_text)
+    for legacy_file in OUTPUT_DIR.glob(f"{output_prefix}_*"):
+        if legacy_file.is_file():
+            try:
+                legacy_file.unlink()
+            except OSError:
+                pass
 
-    # 保存优化版本（多个）
+    report_file = OUTPUT_DIR / f"{output_prefix}_report.md"
+    report_content = _build_single_markdown_report(
+        title=title,
+        video_url=video_url,
+        pipeline=active_pipeline,
+        transcript_text=transcript_text,
+        optimized_texts=optimized_texts,
+        artifacts_data=artifacts_data,
+        artifacts_meta=artifacts_meta,
+        total_elapsed=time.time() - total_start,
+    )
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(report_content)
+
+    raw_file = None
     optimized_files = {}
-    for prompt_name, optimized_text in optimized_texts.items():
-        optimized_file = OUTPUT_DIR / f"{timestamp}_{safe_title}_{prompt_name}.md"
-        with open(optimized_file, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n")
-            f.write(f"**视频链接**: {video_url}\n\n")
-            f.write(f"**提示词**: {prompt_name}\n\n")
-            f.write("---\n\n")
-            f.write(optimized_text)
-        optimized_files[prompt_name] = str(optimized_file)
-
-    report_file = None
-    if report_text:
-        report_file = OUTPUT_DIR / f"{timestamp}_{safe_title}_report.md"
-        with open(report_file, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n")
-            f.write(f"**视频链接**: {video_url}\n\n")
-            f.write(f"**Pipeline**: {active_pipeline}\n\n")
-            f.write("---\n\n")
-            f.write(report_text)
-
     artifacts_file = None
-    if artifacts_data:
-        artifacts_file = OUTPUT_DIR / f"{timestamp}_{safe_title}_artifacts.json"
-        with open(artifacts_file, "w", encoding="utf-8") as f:
-            json.dump(artifacts_data, f, ensure_ascii=False, indent=2)
 
     save_elapsed = time.time() - save_start
     logger.info(f"结果保存完成 (耗时: {format_time(save_elapsed)})")
@@ -760,13 +911,7 @@ def process_video(
     print("✅ 处理完成！")
     print(f"⏱️  总耗时: {format_time(total_elapsed)}")
     print(f"🧩 Pipeline: {active_pipeline}")
-    print(f"📄 原始转写: {raw_file}")
-    for prompt_name, file_path in optimized_files.items():
-        print(f"✨ 优化版本 ({prompt_name}): {file_path}")
-    if report_file:
-        print(f"📝 总报告: {report_file}")
-    if artifacts_file:
-        print(f"🧪 Artifacts: {artifacts_file}")
+    print(f"📝 汇总报告: {report_file}")
     print("=" * 60)
 
     # 打印预览
@@ -780,7 +925,7 @@ def process_video(
         "title": title,
         "video_url": video_url,
         "platform": platform,
-        "raw_file": str(raw_file),
+        "raw_file": str(raw_file) if raw_file else None,
         "optimized_files": optimized_files,
         "report_file": str(report_file) if report_file else None,
         "artifacts_file": str(artifacts_file) if artifacts_file else None,

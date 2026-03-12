@@ -1,0 +1,245 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1014;
+  --panel: rgba(18, 22, 29, 0.96);
+  --line: rgba(234, 220, 196, 0.14);
+  --line-strong: rgba(234, 220, 196, 0.24);
+  --text: #f6f1e8;
+  --text-soft: rgba(246, 241, 232, 0.72);
+  --text-faint: rgba(246, 241, 232, 0.5);
+  --accent: #d7c3a7;
+  --accent-strong: #efe2cf;
+  --success: #a6d6b4;
+  --danger: #f1a2a2;
+  --font-body: "Aptos", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --font-display: "Palatino Linotype", "Times New Roman", serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 390px;
+  min-height: 560px;
+  background:
+    radial-gradient(circle at top right, rgba(215, 195, 167, 0.18), transparent 30%),
+    linear-gradient(180deg, #0b0e12 0%, #10141a 100%);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.popup-shell {
+  padding: 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.hero-card,
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28);
+}
+
+.hero-card {
+  padding: 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel {
+  padding: 1rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 1.45rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+}
+
+.section-head,
+.split-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  margin-top: 0.9rem;
+}
+
+.field-label,
+.support-copy {
+  color: var(--text-soft);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.support-copy {
+  margin: 0.7rem 0 0;
+}
+
+.text-input,
+.select-input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  padding: 0.78rem 0.82rem;
+  outline: none;
+}
+
+.compact-select {
+  width: 130px;
+}
+
+.primary-button,
+.ghost-button,
+.prompt-item {
+  border-radius: 16px;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.primary-button {
+  width: 100%;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #191410;
+  padding: 0.88rem 1rem;
+  margin-top: 0.95rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.ghost-button {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  padding: 0.62rem 0.85rem;
+  cursor: pointer;
+}
+
+.primary-button:hover:not(:disabled),
+.ghost-button:hover,
+.prompt-item:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.28rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.76rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.status-chip.success {
+  color: var(--success);
+}
+
+.status-chip.error {
+  color: var(--danger);
+}
+
+.status-chip.muted {
+  color: var(--text-soft);
+}
+
+.prompt-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.prompt-item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+.prompt-item input {
+  accent-color: var(--accent);
+}
+
+.preview-box {
+  margin: 0.75rem 0 0;
+  min-height: 172px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.95rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  font-size: 0.82rem;
+}
+
+.result-title {
+  margin: 0.8rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.path-list {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.path-item {
+  color: var(--text-faint);
+  font-size: 0.73rem;
+  line-height: 1.45;
+  word-break: break-all;
+}

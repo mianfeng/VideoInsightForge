@@ -1,159 +1,69 @@
 <!doctype html>
-<html>
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>Video Quick Eval</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #f5f6f7;
-        --panel: #ffffff;
-        --text: #111827;
-        --sub: #6b7280;
-        --accent: #2563eb;
-        --danger: #dc2626;
-        --border: #e5e7eb;
-      }
-      * {
-        box-sizing: border-box;
-        font-family: "Segoe UI", system-ui, sans-serif;
-      }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        width: 340px;
-      }
-      .wrap {
-        padding: 12px;
-      }
-      .card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px;
-        margin-bottom: 10px;
-      }
-      h1 {
-        margin: 0 0 6px 0;
-        font-size: 14px;
-      }
-      label {
-        font-size: 11px;
-        color: var(--sub);
-        display: block;
-        margin-bottom: 4px;
-      }
-      input {
-        width: 100%;
-        padding: 7px 8px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        font-size: 12px;
-      }
-      button {
-        width: 100%;
-        border: none;
-        background: var(--accent);
-        color: white;
-        padding: 8px 10px;
-        border-radius: 8px;
-        font-size: 12px;
-        cursor: pointer;
-      }
-      button:disabled {
-        background: #93c5fd;
-        cursor: default;
-      }
-      .row {
-        display: flex;
-        gap: 8px;
-      }
-      select {
-        width: 100%;
-        padding: 7px 8px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        font-size: 12px;
-        background: white;
-      }
-      .row button {
-        flex: 1;
-      }
-      .status {
-        font-size: 12px;
-        color: var(--sub);
-        white-space: pre-wrap;
-      }
-      .error {
-        color: var(--danger);
-      }
-      .preview {
-        font-size: 11px;
-        line-height: 1.4;
-        color: #374151;
-        white-space: pre-wrap;
-        max-height: 140px;
-        overflow: auto;
-        border: 1px dashed var(--border);
-        padding: 6px;
-        border-radius: 8px;
-        background: #fafafa;
-      }
-      .path {
-        font-size: 11px;
-        color: var(--sub);
-        word-break: break-all;
-      }
-      .prompt-list {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 6px;
-        max-height: 140px;
-        overflow: auto;
-        background: #fafafa;
-        font-size: 12px;
-      }
-      .prompt-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 4px;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VideoInsightForge</title>
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <div class="wrap">
-      <div class="card">
-        <h1>Video Quick Eval</h1>
-        <label for="serverUrl">Local server</label>
-        <input id="serverUrl" type="text" placeholder="http://127.0.0.1:8732" />
-      </div>
-
-      <div class="card">
-        <label for="modelSize">Whisper model</label>
-        <select id="modelSize"></select>
-        <label style="margin-top: 8px;">Prompts</label>
-        <div id="promptList" class="prompt-list"></div>
-      </div>
-
-      <div class="card">
-        <div class="row">
-          <button id="runBtn">Process current tab</button>
-          <button id="openBtn" title="Open output folder">Open output</button>
+    <div class="popup-shell">
+      <header class="hero-card">
+        <div>
+          <p class="eyebrow">Quick Trigger</p>
+          <h1>VideoInsightForge</h1>
         </div>
-        <div id="status" class="status" style="margin-top: 8px;">Idle</div>
-      </div>
+        <span id="healthChip" class="status-chip muted">Connecting</span>
+      </header>
 
-      <div class="card">
-        <div class="row" style="align-items: center;">
-          <label style="margin: 0;">Result preview</label>
-          <select id="previewType" style="width: auto; flex: 1;"></select>
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Task</p>
+            <h2>Current tab</h2>
+          </div>
+          <button id="openBtn" class="ghost-button">Output</button>
         </div>
-        <div id="preview" class="preview">No result yet.</div>
-        <div id="paths" class="path" style="margin-top: 6px;"></div>
-      </div>
+
+        <p id="tabMeta" class="support-copy">Reading the active tab...</p>
+
+        <label class="field-stack">
+          <span class="field-label">Local server</span>
+          <input id="serverUrl" class="text-input" type="text" placeholder="http://127.0.0.1:8732" />
+        </label>
+
+        <label class="field-stack">
+          <span class="field-label">Whisper model</span>
+          <select id="modelSize" class="select-input"></select>
+        </label>
+
+        <div class="field-stack">
+          <div class="split-row">
+            <span class="field-label">Prompts</span>
+            <span class="support-copy">Compact output views</span>
+          </div>
+          <div id="promptList" class="prompt-list"></div>
+        </div>
+
+        <button id="runBtn" class="primary-button">Process current tab</button>
+        <p id="status" class="support-copy">Idle</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Reader</p>
+            <h2>Latest result</h2>
+          </div>
+          <select id="previewType" class="select-input compact-select"></select>
+        </div>
+
+        <p id="resultTitle" class="result-title">No result yet</p>
+        <pre id="preview" class="preview-box">Run a task or wait for the desktop app to generate outputs.</pre>
+        <div id="paths" class="path-list"></div>
+      </section>
     </div>
+
     <script src="popup.js"></script>
   </body>
 </html>

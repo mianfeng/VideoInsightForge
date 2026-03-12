@@ -2,44 +2,23 @@ const DEFAULT_SERVER = "http://127.0.0.1:8732";
 const POLL_INTERVAL_MS = 1500;
 
 const serverInput = document.getElementById("serverUrl");
+const modelSelect = document.getElementById("modelSize");
+const promptList = document.getElementById("promptList");
 const runBtn = document.getElementById("runBtn");
 const openBtn = document.getElementById("openBtn");
 const statusEl = document.getElementById("status");
 const previewEl = document.getElementById("preview");
-const pathsEl = document.getElementById("paths");
-const modelSelect = document.getElementById("modelSize");
-const promptList = document.getElementById("promptList");
 const previewType = document.getElementById("previewType");
+const resultTitleEl = document.getElementById("resultTitle");
+const pathsEl = document.getElementById("paths");
+const healthChip = document.getElementById("healthChip");
+const tabMeta = document.getElementById("tabMeta");
 
 let currentJobId = null;
-let polling = false;
 let lastResult = null;
+let lastRecent = null;
 let cachedPrompts = [];
 let cachedModelSize = "";
-
-function setStatus(text, isError = false) {
-  statusEl.textContent = text;
-  statusEl.classList.toggle("error", isError);
-}
-
-function setPreview(text) {
-  previewEl.textContent = text || "No result yet.";
-}
-
-function setPaths(rawFile, optimizedFiles) {
-  let lines = [];
-  if (rawFile) lines.push(`Raw: ${rawFile}`);
-  if (optimizedFiles) {
-    Object.entries(optimizedFiles).forEach(([name, path]) => {
-      lines.push(`${name}: ${path}`);
-    });
-  }
-  pathsEl.textContent = lines.join("\n");
-}
-
-function getServerUrl() {
-  return serverInput.value.trim() || DEFAULT_SERVER;
-}
 
 function sendMessage(payload) {
   return new Promise((resolve) => {
@@ -47,11 +26,39 @@ function sendMessage(payload) {
   });
 }
 
-async function loadConfig() {
-  const data = await chrome.storage.local.get(["serverUrl", "modelSize", "prompts"]);
-  serverInput.value = data.serverUrl || DEFAULT_SERVER;
-  if (data.modelSize) cachedModelSize = data.modelSize;
-  if (Array.isArray(data.prompts)) cachedPrompts = data.prompts;
+function getServerUrl() {
+  return serverInput.value.trim() || DEFAULT_SERVER;
+}
+
+function setStatus(text, tone = "muted") {
+  statusEl.textContent = text;
+  statusEl.className = "support-copy";
+  if (tone === "error") {
+    statusEl.style.color = "var(--danger)";
+  } else if (tone === "success") {
+    statusEl.style.color = "var(--success)";
+  } else {
+    statusEl.style.color = "";
+  }
+}
+
+function setHealth(text, tone = "muted") {
+  healthChip.textContent = text;
+  healthChip.className = `status-chip ${tone}`;
+}
+
+function formatDate(ts) {
+  if (!ts) return "Unknown";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(ts * 1000));
+}
+
+function getSelectedPrompts() {
+  return Array.from(promptList.querySelectorAll("input:checked")).map((node) => node.dataset.name);
 }
 
 async function saveConfig() {
@@ -62,105 +69,222 @@ async function saveConfig() {
   });
 }
 
-function getSelectedPrompts() {
-  return Array.from(promptList.querySelectorAll("input:checked")).map((i) => i.dataset.name);
+async function loadConfig() {
+  const data = await chrome.storage.local.get(["serverUrl", "modelSize", "prompts"]);
+  serverInput.value = data.serverUrl || DEFAULT_SERVER;
+  cachedModelSize = data.modelSize || "";
+  cachedPrompts = Array.isArray(data.prompts) ? data.prompts : [];
 }
 
-function updatePreviewOptions() {
+function buildViewNames() {
+  const names = ["raw"];
+  const previewKeys = lastResult?.preview ? Object.keys(lastResult.preview) : [];
+  const recentKeys = lastRecent?.preview ? Object.keys(lastRecent.preview) : [];
+  [...previewKeys, ...recentKeys].forEach((name) => {
+    if (name && !names.includes(name)) {
+      names.push(name);
+    }
+  });
+  return names;
+}
+
+function renderPreviewOptions() {
   previewType.innerHTML = "";
-  const opts = ["raw"];
-  const promptNames = lastResult?.preview
-    ? Object.keys(lastResult.preview)
-    : getSelectedPrompts();
-  promptNames.forEach((p) => {
-    if (p && !opts.includes(p)) opts.push(p);
-  });
-  opts.forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    previewType.appendChild(opt);
+  buildViewNames().forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    previewType.appendChild(option);
   });
 }
 
-function renderPreviewFromResult() {
-  if (!lastResult) {
-    setPreview("No result yet.");
+function renderPaths(paths = {}) {
+  pathsEl.innerHTML = "";
+  Object.entries(paths).forEach(([label, path]) => {
+    if (!path) return;
+    const line = document.createElement("div");
+    line.className = "path-item";
+    line.textContent = `${label}: ${path}`;
+    pathsEl.appendChild(line);
+  });
+}
+
+function renderLatestResult() {
+  const activeView = previewType.value || "raw";
+  const result = lastResult || lastRecent;
+
+  if (!result) {
+    resultTitleEl.textContent = "No result yet";
+    previewEl.textContent = "Run a task or wait for the desktop app to generate outputs.";
+    renderPaths();
     return;
   }
-  const key = previewType.value || "raw";
-  const preview = lastResult.preview?.[key] || "";
-  setPreview(preview || "Empty preview.");
+
+  resultTitleEl.textContent = result.title || "Latest result";
+  previewEl.textContent =
+    result.preview?.[activeView] ||
+    result.preview?.[result.primary_view] ||
+    "No preview available.";
+
+  const filePaths = lastResult
+    ? {
+        raw: lastResult.raw_file,
+        ...(lastResult.optimized_files || {}),
+        ...(lastResult.report_file ? { report: lastResult.report_file } : {}),
+        ...(lastResult.artifacts_file ? { artifacts: lastResult.artifacts_file } : {}),
+      }
+    : lastRecent?.files || {};
+
+  renderPaths(filePaths);
+}
+
+async function loadHealth() {
+  const resp = await sendMessage({ type: "health", serverUrl: getServerUrl() });
+  if (!resp?.ok) {
+    setHealth("Server offline", "error");
+    return;
+  }
+  setHealth(`Ready | ${resp.data.default_model}`, "success");
+}
+
+async function loadRecentResult() {
+  const resp = await sendMessage({
+    type: "get_recent_results",
+    serverUrl: getServerUrl(),
+    limit: 1,
+  });
+
+  if (!resp?.ok) {
+    lastRecent = null;
+    renderLatestResult();
+    return;
+  }
+
+  lastRecent = resp.data.results?.[0] || null;
+  renderPreviewOptions();
+  renderLatestResult();
+}
+
+async function populateModels() {
+  const resp = await sendMessage({ type: "get_models", serverUrl: getServerUrl() });
+  if (!resp?.ok) return;
+
+  modelSelect.innerHTML = "";
+  resp.data.models.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    modelSelect.appendChild(option);
+  });
+  modelSelect.value = cachedModelSize || resp.data.default || resp.data.models[0];
+}
+
+async function populatePrompts() {
+  const resp = await sendMessage({ type: "get_prompts", serverUrl: getServerUrl() });
+  if (!resp?.ok) return;
+
+  promptList.innerHTML = "";
+  resp.data.prompts.forEach((name) => {
+    const row = document.createElement("label");
+    row.className = "prompt-item";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.name = name;
+    input.checked = cachedPrompts.includes(name) || (!cachedPrompts.length && name === "summary");
+    input.addEventListener("change", () => {
+      renderPreviewOptions();
+      saveConfig();
+    });
+
+    const text = document.createElement("span");
+    text.textContent = name;
+
+    row.appendChild(input);
+    row.appendChild(text);
+    promptList.appendChild(row);
+  });
+}
+
+async function readCurrentTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) {
+    tabMeta.textContent = "No active tab found.";
+    return null;
+  }
+
+  const title = tab.title || "Untitled tab";
+  const url = tab.url || "";
+  tabMeta.textContent = `${title}\n${url}`;
+  return tab;
 }
 
 async function startJob() {
-  setStatus("Reading current tab...");
-  runBtn.disabled = true;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url) {
-    setStatus("No active tab URL found.", true);
-    runBtn.disabled = false;
+  const tab = await readCurrentTab();
+  if (!tab?.url) {
+    setStatus("No active tab URL found.", "error");
     return;
   }
 
+  runBtn.disabled = true;
+  setStatus("Submitting job...");
   const resp = await sendMessage({
     type: "start_job",
-    url: tab.url,
     serverUrl: getServerUrl(),
+    url: tab.url,
     modelSize: modelSelect.value || undefined,
     prompts: getSelectedPrompts(),
+    target: tab.url,
+    sourceKind: "url",
   });
 
-  if (!resp || !resp.ok) {
-    setStatus(resp?.error || "Failed to start job.", true);
+  if (!resp?.ok) {
+    setStatus(resp?.error || "Failed to start job.", "error");
     runBtn.disabled = false;
     return;
   }
 
   currentJobId = resp.data.job_id;
-  setStatus(`Job queued: ${currentJobId}\nURL: ${tab.url}`);
+  setStatus(`Queued | ${tab.title || tab.url}`);
   pollJob();
 }
 
 async function pollJob() {
-  if (polling || !currentJobId) return;
-  polling = true;
+  if (!currentJobId) return;
 
-  while (currentJobId) {
-    const resp = await sendMessage({
-      type: "get_status",
-      jobId: currentJobId,
-      serverUrl: getServerUrl(),
-    });
+  const resp = await sendMessage({
+    type: "get_status",
+    serverUrl: getServerUrl(),
+    jobId: currentJobId,
+  });
 
-    if (!resp || !resp.ok) {
-      setStatus(resp?.error || "Failed to poll job.", true);
-      break;
-    }
-
-    const job = resp.data;
-    const statusLines = [`Status: ${job.status}`];
-    if (job.result?.title) statusLines.push(`Title: ${job.result.title}`);
-    if (job.error) statusLines.push(`Error: ${job.error}`);
-    setStatus(statusLines.join("\n"), job.status === "failed");
-
-    if (job.status === "succeeded") {
-      lastResult = job.result || null;
-      updatePreviewOptions();
-      renderPreviewFromResult();
-      setPaths(job.result?.raw_file, job.result?.optimized_files);
-      break;
-    }
-    if (job.status === "failed") {
-      setPreview("No result.");
-      break;
-    }
-
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  if (!resp?.ok) {
+    setStatus(resp?.error || "Polling failed.", "error");
+    runBtn.disabled = false;
+    currentJobId = null;
+    return;
   }
 
-  polling = false;
-  runBtn.disabled = false;
+  const job = resp.data;
+  if (job.status === "running") {
+    setStatus(job.llm_progress_text || "Running...");
+  } else if (job.status === "failed") {
+    setStatus(job.error || "Job failed.", "error");
+    currentJobId = null;
+    runBtn.disabled = false;
+    return;
+  } else if (job.status === "succeeded") {
+    setStatus("Completed.", "success");
+    lastResult = job.result || null;
+    renderPreviewOptions();
+    renderLatestResult();
+    currentJobId = null;
+    runBtn.disabled = false;
+    loadRecentResult();
+    return;
+  }
+
+  window.setTimeout(pollJob, POLL_INTERVAL_MS);
 }
 
 async function openOutput() {
@@ -168,69 +292,30 @@ async function openOutput() {
     type: "open_output",
     serverUrl: getServerUrl(),
   });
-  if (!resp || !resp.ok) {
-    setStatus(resp?.error || "Failed to open output folder.", true);
+  if (!resp?.ok) {
+    setStatus(resp?.error || "Failed to open output folder.", "error");
   }
 }
 
-serverInput.addEventListener("change", saveConfig);
+async function bootstrap() {
+  await loadConfig();
+  await Promise.all([populateModels(), populatePrompts(), loadHealth(), readCurrentTab()]);
+  await loadRecentResult();
+  renderPreviewOptions();
+  renderLatestResult();
+}
+
+serverInput.addEventListener("change", () => {
+  saveConfig();
+  loadHealth();
+  loadRecentResult();
+});
 modelSelect.addEventListener("change", saveConfig);
-previewType.addEventListener("change", renderPreviewFromResult);
+previewType.addEventListener("change", renderLatestResult);
 runBtn.addEventListener("click", startJob);
 openBtn.addEventListener("click", openOutput);
 
-async function initMetadata() {
-  const server = getServerUrl();
-  try {
-    const modelsResp = await sendMessage({ type: "get_models", serverUrl: server });
-    if (modelsResp?.ok) {
-      modelSelect.innerHTML = "";
-      modelsResp.data.models.forEach((m) => {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        modelSelect.appendChild(opt);
-      });
-      if (cachedModelSize) {
-        modelSelect.value = cachedModelSize;
-      } else if (modelsResp.data.default) {
-        modelSelect.value = modelsResp.data.default;
-      }
-    }
-  } catch (_) {}
-
-  try {
-    const promptsResp = await sendMessage({ type: "get_prompts", serverUrl: server });
-    if (promptsResp?.ok) {
-      promptList.innerHTML = "";
-      promptsResp.data.prompts.forEach((name) => {
-        const row = document.createElement("label");
-        row.className = "prompt-item";
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.dataset.name = name;
-        input.addEventListener("change", () => {
-          updatePreviewOptions();
-          saveConfig();
-        });
-        const text = document.createElement("span");
-        text.textContent = name;
-        row.appendChild(input);
-        row.appendChild(text);
-        promptList.appendChild(row);
-      });
-      cachedPrompts.forEach((name) => {
-        const input = promptList.querySelector(`input[data-name="${name}"]`);
-        if (input) input.checked = true;
-      });
-      updatePreviewOptions();
-    }
-  } catch (_) {}
-}
-
-loadConfig()
-  .then(initMetadata)
-  .catch(() => {
-    serverInput.value = DEFAULT_SERVER;
-    initMetadata();
-  });
+bootstrap().catch((error) => {
+  setStatus(error.message, "error");
+  setHealth("Server offline", "error");
+});

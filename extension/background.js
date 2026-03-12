@@ -27,7 +27,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const server = msg.serverUrl || DEFAULT_SERVER;
     if (msg.type === "start_job") {
       const data = await postJson(`${server}/jobs`, {
+        target: msg.target || msg.url,
         url: msg.url,
+        source_kind: msg.sourceKind || "url",
         model_size: msg.modelSize,
         prompts: msg.prompts || [],
       });
@@ -44,8 +46,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, data });
       return;
     }
+    if (msg.type === "health") {
+      const data = await getJson(`${server}/health`);
+      sendResponse({ ok: true, data });
+      return;
+    }
     if (msg.type === "get_models") {
       const data = await getJson(`${server}/models`);
+      sendResponse({ ok: true, data });
+      return;
+    }
+    if (msg.type === "get_recent_results") {
+      const data = await getJson(`${server}/results/recent?limit=${msg.limit || 6}`);
       sendResponse({ ok: true, data });
       return;
     }

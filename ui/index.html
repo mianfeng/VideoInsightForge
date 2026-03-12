@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VideoInsightForge</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <div class="backdrop backdrop-a"></div>
+    <div class="backdrop backdrop-b"></div>
+
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Input-first Desktop Flow</p>
+        <h1>VideoInsightForge</h1>
+        <p class="topbar-copy">先选素材，再决定分析深度。结果区退到次级，只在需要时展开阅读。</p>
+      </div>
+      <div class="topbar-actions">
+        <span id="healthChip" class="status-chip muted">Connecting</span>
+        <button id="settingsBtn" class="ghost-button">Settings</button>
+        <button id="outputBtn" class="ghost-button strong">Output</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="panel intake-panel">
+        <div class="panel-intro">
+          <div>
+            <p class="panel-kicker">Workflow</p>
+            <h2>从输入选择开始</h2>
+            <p class="section-copy">只保留三步：选择来源、确认分析方式、开始运行。</p>
+          </div>
+          <div class="selection-card">
+            <span class="selection-label">Current selection</span>
+            <strong id="selectionHeadline">等待选择输入</strong>
+            <p id="selectionMeta" class="selection-meta">默认使用 URL 输入。</p>
+          </div>
+        </div>
+
+        <div class="step-grid">
+          <section class="step-card">
+            <div class="step-head">
+              <span class="step-index">01</span>
+              <div>
+                <h3>选择来源</h3>
+                <p class="field-hint">支持链接、本地视频或本地音频。</p>
+              </div>
+            </div>
+
+            <label class="section-label">Source</label>
+            <div class="source-switch" id="sourceSwitch">
+              <button data-kind="url" class="source-pill active">URL</button>
+              <button data-kind="local_video" class="source-pill">Local video</button>
+              <button data-kind="local_audio" class="source-pill">Local audio</button>
+            </div>
+
+            <div class="field-stack">
+              <label for="sourceInput" id="sourceInputLabel" class="field-label">Video URL</label>
+              <textarea
+                id="sourceInput"
+                class="text-input source-input"
+                placeholder="https://www.bilibili.com/video/BV..."
+              ></textarea>
+            </div>
+
+            <div class="field-row">
+              <button id="browseBtn" class="ghost-button hidden">Choose file</button>
+              <span id="sourceHint" class="field-hint">Paste a video URL to analyze.</span>
+            </div>
+          </section>
+
+          <section class="step-card">
+            <div class="step-head">
+              <span class="step-index">02</span>
+              <div>
+                <h3>确认分析方式</h3>
+                <p class="field-hint">只显示必要设置，避免把页面变成控制台。</p>
+              </div>
+            </div>
+
+            <div class="field-stack compact">
+              <label for="modelSize" class="field-label">Whisper model</label>
+              <select id="modelSize" class="select-input"></select>
+            </div>
+
+            <label class="toggle-row">
+              <input type="checkbox" id="noLlmToggle" />
+              <span>仅转写，跳过 LLM 输出</span>
+            </label>
+
+            <div class="field-stack">
+              <div class="field-row split">
+                <label class="field-label">Prompts</label>
+                <span id="promptHint" class="field-hint">只勾选这次真正需要的视角。</span>
+              </div>
+              <div id="promptList" class="prompt-grid"></div>
+            </div>
+          </section>
+
+          <section class="step-card action-card">
+            <div class="step-head">
+              <span class="step-index">03</span>
+              <div>
+                <h3>开始运行</h3>
+                <p class="field-hint">完成后结果会进入下方输出区，不打断当前输入流程。</p>
+              </div>
+            </div>
+
+            <div class="action-stack">
+              <button id="runBtn" class="primary-button">Run analysis</button>
+              <p id="runSummary" class="field-hint">
+                Idle. Choose an input first, then start a new analysis.
+              </p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <aside class="utility-column">
+        <section class="panel status-panel">
+          <div class="panel-heading">
+            <p class="panel-kicker">Run Pulse</p>
+            <h2>当前状态</h2>
+          </div>
+
+          <div class="status-grid">
+            <div class="info-tile">
+              <span class="card-label">Status</span>
+              <span id="jobStatus" class="status-chip muted">Idle</span>
+            </div>
+            <div class="info-tile">
+              <span class="card-label">LLM</span>
+              <p id="llmProgress" class="meta-copy">No active generation.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel recent-panel">
+          <div class="card-header-row">
+            <div>
+              <p class="panel-kicker">Library</p>
+              <h2>最近输出</h2>
+            </div>
+            <button id="refreshRecentBtn" class="inline-button">Refresh</button>
+          </div>
+          <div id="recentList" class="recent-list"></div>
+        </section>
+
+        <details class="panel log-panel">
+          <summary class="card-header-row">
+            <div>
+              <p class="panel-kicker">Debug</p>
+              <h2>运行日志</h2>
+            </div>
+            <button id="clearLogBtn" class="inline-button" type="button">Clear</button>
+          </summary>
+          <pre id="logOutput" class="log-output">No task activity yet.</pre>
+        </details>
+      </aside>
+
+      <section class="panel reader-panel">
+        <div class="reader-header">
+          <div>
+            <p class="panel-kicker">Output Shelf</p>
+            <h2 id="resultTitle">暂无输出</h2>
+          </div>
+          <div class="reader-meta">
+            <span id="platformPill" class="status-chip muted">Waiting</span>
+            <span id="updatedMeta" class="meta-copy">完成分析后，结果会显示在这里。</span>
+          </div>
+        </div>
+
+        <div id="resultTabs" class="result-tabs"></div>
+        <div id="resultFiles" class="result-files"></div>
+
+        <article class="reader-body">
+          <pre id="readerContent" class="reader-content">完成分析后，结果内容会显示在这里。</pre>
+        </article>
+      </section>
+    </main>
+
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <p class="panel-kicker">Configuration</p>
+            <h3>Runtime settings</h3>
+          </div>
+          <button id="closeSettingsBtn" class="inline-button">Close</button>
+        </div>
+
+        <div class="settings-grid">
+          <label class="field-stack">
+            <span class="field-label">Provider</span>
+            <input id="providerInput" class="text-input" type="text" />
+          </label>
+          <label class="field-stack">
+            <span class="field-label">API key</span>
+            <input id="apiKeyInput" class="text-input" type="password" />
+          </label>
+          <label class="field-stack full">
+            <span class="field-label">Base URL</span>
+            <input id="baseUrlInput" class="text-input" type="text" />
+          </label>
+          <label class="field-stack full">
+            <span class="field-label">LLM model</span>
+            <input id="llmModelInput" class="text-input" type="text" />
+          </label>
+          <label class="field-stack">
+            <span class="field-label">Default Whisper model</span>
+            <select id="defaultWhisperInput" class="select-input"></select>
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button id="saveSettingsBtn" class="primary-button">Save settings</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/ui/app.js"></script>
+  </body>
+</html>
