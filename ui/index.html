@@ -110,7 +110,7 @@
             <div class="action-stack">
               <button id="runBtn" class="primary-button">Run analysis</button>
               <p id="runSummary" class="field-hint">
-                Idle. Choose an input first, then start a new analysis.
+                Idle. Choose an input first, then generate one consolidated report.
               </p>
             </div>
           </section>
@@ -140,7 +140,7 @@
           <div class="card-header-row">
             <div>
               <p class="panel-kicker">Library</p>
-              <h2>最近输出</h2>
+              <h2>最近报告</h2>
             </div>
             <button id="refreshRecentBtn" class="inline-button">Refresh</button>
           </div>
@@ -163,19 +163,17 @@
         <div class="reader-header">
           <div>
             <p class="panel-kicker">Output Shelf</p>
-            <h2 id="resultTitle">暂无输出</h2>
+            <h2 id="resultTitle">暂无报告</h2>
+            <p id="outputMeta" class="meta-copy">单份汇总报告会显示在这里。</p>
           </div>
           <div class="reader-meta">
             <span id="platformPill" class="status-chip muted">Waiting</span>
-            <span id="updatedMeta" class="meta-copy">完成分析后，结果会显示在这里。</span>
+            <span id="updatedMeta" class="meta-copy">完成分析后，报告会显示在这里。</span>
           </div>
         </div>
 
-        <div id="resultTabs" class="result-tabs"></div>
-        <div id="resultFiles" class="result-files"></div>
-
         <article class="reader-body">
-          <pre id="readerContent" class="reader-content">完成分析后，结果内容会显示在这里。</pre>
+          <pre id="readerContent" class="reader-content">完成分析后，汇总报告内容会显示在这里。</pre>
         </article>
       </section>
     </main>

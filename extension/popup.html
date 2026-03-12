@@ -10,8 +10,9 @@
     <div class="popup-shell">
       <header class="hero-card">
         <div>
-          <p class="eyebrow">Quick Trigger</p>
+          <p class="eyebrow">Quick Input</p>
           <h1>VideoInsightForge</h1>
+          <p class="hero-copy">从当前标签页直接生成一份汇总报告。</p>
         </div>
         <span id="healthChip" class="status-chip muted">Connecting</span>
       </header>
@@ -19,13 +20,17 @@
       <section class="panel">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Task</p>
-            <h2>Current tab</h2>
+            <p class="eyebrow">Input</p>
+            <h2>当前页面</h2>
           </div>
           <button id="openBtn" class="ghost-button">Output</button>
         </div>
 
-        <p id="tabMeta" class="support-copy">Reading the active tab...</p>
+        <div class="selection-card">
+          <span class="selection-label">Current target</span>
+          <strong id="selectionHeadline">读取当前标签页...</strong>
+          <p id="tabMeta" class="support-copy">Reading the active tab...</p>
+        </div>
 
         <label class="field-stack">
           <span class="field-label">Local server</span>
@@ -40,27 +45,26 @@
         <div class="field-stack">
           <div class="split-row">
             <span class="field-label">Prompts</span>
-            <span class="support-copy">Compact output views</span>
+            <span class="support-copy compact">只选本次需要的视角</span>
           </div>
           <div id="promptList" class="prompt-list"></div>
         </div>
 
-        <button id="runBtn" class="primary-button">Process current tab</button>
+        <button id="runBtn" class="primary-button">Generate report</button>
         <p id="status" class="support-copy">Idle</p>
       </section>
 
       <section class="panel">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Reader</p>
-            <h2>Latest result</h2>
+            <p class="eyebrow">Report</p>
+            <h2>最新汇总</h2>
           </div>
-          <select id="previewType" class="select-input compact-select"></select>
         </div>
 
-        <p id="resultTitle" class="result-title">No result yet</p>
-        <pre id="preview" class="preview-box">Run a task or wait for the desktop app to generate outputs.</pre>
-        <div id="paths" class="path-list"></div>
+        <p id="resultTitle" class="result-title">暂无报告</p>
+        <p id="resultMeta" class="support-copy compact">最近生成的汇总报告会显示在这里。</p>
+        <pre id="preview" class="preview-box">运行任务后，这里会展示报告预览。</pre>
       </section>
     </div>
 

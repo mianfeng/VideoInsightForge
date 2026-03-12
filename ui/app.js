@@ -10,7 +10,6 @@ const state = {
   pollHandle: null,
   recentResults: [],
   currentResult: null,
-  currentView: "",
   prompts: [],
   selectedPrompts: new Set(["summary"]),
   config: {},
@@ -34,10 +33,9 @@ const els = {
   runBtn: document.getElementById("runBtn"),
   runSummary: document.getElementById("runSummary"),
   resultTitle: document.getElementById("resultTitle"),
+  outputMeta: document.getElementById("outputMeta"),
   platformPill: document.getElementById("platformPill"),
   updatedMeta: document.getElementById("updatedMeta"),
-  resultTabs: document.getElementById("resultTabs"),
-  resultFiles: document.getElementById("resultFiles"),
   readerContent: document.getElementById("readerContent"),
   jobStatus: document.getElementById("jobStatus"),
   llmProgress: document.getElementById("llmProgress"),
@@ -215,27 +213,39 @@ function collectSelectedPrompts() {
 }
 
 function normalizeRecentResult(item) {
+  const files = item.files || {};
+  const primaryView =
+    item.primary_view ||
+    (files.report ? "report" : Object.keys(files)[0] || "report");
+
   return {
     id: item.id,
     title: item.title || "Untitled Result",
     updatedAt: item.updated_at || 0,
-    files: item.files || {},
+    files,
     preview: item.preview || {},
-    views: item.views || Object.keys(item.files || {}),
-    primaryView: item.primary_view || "raw",
+    views: item.views || Object.keys(files),
+    primaryView,
+    primaryFile: item.primary_file || files[primaryView] || null,
     platform: item.platform || "",
   };
 }
 
 function normalizeJobResult(result) {
+  const files = result.views || {};
+  const primaryView =
+    result.primary_view ||
+    (files.report ? "report" : Object.keys(files)[0] || "report");
+
   return {
-    id: result.raw_file || `job-${Date.now()}`,
+    id: result.primary_file || result.report_file || result.raw_file || `job-${Date.now()}`,
     title: result.title || "Untitled Result",
     updatedAt: Date.now() / 1000,
-    files: result.views || {},
+    files,
     preview: result.preview || {},
-    views: Object.keys(result.views || {}),
-    primaryView: Object.keys(result.views || {})[0] || "raw",
+    views: Object.keys(files),
+    primaryView,
+    primaryFile: result.primary_file || files[primaryView] || result.report_file || null,
     platform: result.platform || "",
   };
 }
@@ -243,48 +253,32 @@ function normalizeJobResult(result) {
 function renderReaderShell() {
   const result = state.currentResult;
   if (!result) {
-    els.resultTitle.textContent = "暂无输出";
-    els.updatedMeta.textContent = "完成分析后，结果会显示在这里。";
+    els.resultTitle.textContent = "暂无报告";
+    els.outputMeta.textContent = "单份汇总报告会显示在这里。";
+    els.updatedMeta.textContent = "完成分析后，报告会显示在这里。";
     setChip(els.platformPill, "Waiting", "muted");
-    els.resultTabs.innerHTML = "";
-    els.resultFiles.innerHTML = "";
-    els.readerContent.textContent = "完成分析后，结果内容会显示在这里。";
+    els.readerContent.textContent = "完成分析后，汇总报告内容会显示在这里。";
     return;
   }
 
   els.resultTitle.textContent = result.title;
   els.updatedMeta.textContent = `Updated ${formatDate(result.updatedAt)}`;
   setChip(els.platformPill, result.platform || "Local result", "muted");
-
-  els.resultTabs.innerHTML = "";
-  result.views.forEach((view) => {
-    const button = document.createElement("button");
-    button.className = `tab-button ${state.currentView === view ? "active" : ""}`;
-    button.textContent = view;
-    button.addEventListener("click", () => selectResultView(view));
-    els.resultTabs.appendChild(button);
-  });
-
-  els.resultFiles.innerHTML = "";
-  result.views.forEach((view) => {
-    const path = result.files[view];
-    if (!path) return;
-    const pill = document.createElement("button");
-    pill.className = "file-pill";
-    pill.textContent = `${view}: ${path.split("\\").pop()}`;
-    pill.title = path;
-    pill.addEventListener("click", () => selectResultView(view));
-    els.resultFiles.appendChild(pill);
-  });
+  if (result.primaryFile) {
+    const fileName = result.primaryFile.split("\\").pop().split("/").pop();
+    els.outputMeta.textContent = `当前报告: ${fileName}`;
+  } else {
+    els.outputMeta.textContent = `当前视图: ${result.primaryView || "report"}`;
+  }
 }
 
-async function loadViewContent(view) {
+async function loadResultContent() {
   const result = state.currentResult;
   if (!result) return;
 
-  const path = result.files[view];
+  const path = result.primaryFile || result.files[result.primaryView];
   if (!path) {
-    els.readerContent.textContent = result.preview[view] || "No content available.";
+    els.readerContent.textContent = result.preview[result.primaryView] || "No content available.";
     return;
   }
 
@@ -293,21 +287,14 @@ async function loadViewContent(view) {
     const payload = await fetchJson(`/results/content?path=${encodeURIComponent(path)}`);
     els.readerContent.textContent = payload.content || "Empty file.";
   } catch (error) {
-    els.readerContent.textContent = result.preview[view] || error.message;
+    els.readerContent.textContent = result.preview[result.primaryView] || error.message;
   }
 }
 
-async function selectResultView(view) {
-  state.currentView = view;
-  renderReaderShell();
-  await loadViewContent(view);
-}
-
-async function selectResult(result, preferredView) {
+async function selectResult(result) {
   state.currentResult = result;
-  state.currentView = preferredView || result.primaryView || result.views[0] || "raw";
   renderReaderShell();
-  await loadViewContent(state.currentView);
+  await loadResultContent();
   renderRecentList();
 }
 
@@ -325,7 +312,7 @@ function renderRecentList() {
     const item = normalizeRecentResult(rawItem);
     const card = document.createElement("button");
     card.className = `recent-card ${state.currentResult?.id === item.id ? "active" : ""}`;
-    card.addEventListener("click", () => selectResult(item, item.primaryView));
+    card.addEventListener("click", () => selectResult(item));
 
     const title = document.createElement("p");
     title.className = "recent-title";
@@ -356,11 +343,11 @@ function renderJobPayload(job) {
   if (job.status === "queued") {
     els.runSummary.textContent = "任务已提交，等待开始处理。";
   } else if (job.status === "running") {
-    els.runSummary.textContent = "正在处理。结果完成后会自动出现在下方输出区。";
+    els.runSummary.textContent = "正在处理。完成后会生成一份汇总报告并显示在下方。";
   } else if (job.status === "failed") {
     els.runSummary.textContent = job.error || "The task failed.";
   } else if (job.status === "succeeded") {
-    els.runSummary.textContent = "已完成。结果已经进入输出区。";
+    els.runSummary.textContent = "已完成。汇总报告已经进入输出区。";
   }
 }
 
@@ -373,11 +360,11 @@ async function pollCurrentJob() {
 
     if (job.status === "succeeded" && job.result) {
       const result = normalizeJobResult(job.result);
-      await selectResult(result, result.primaryView);
+      await selectResult(result);
       await refreshRecentResults();
       if (state.recentResults.length) {
         const latest = normalizeRecentResult(state.recentResults[0]);
-        await selectResult(latest, latest.primaryView);
+        await selectResult(latest);
       }
       state.currentJobId = null;
       els.runBtn.disabled = false;
@@ -406,7 +393,7 @@ async function refreshRecentResults() {
 
   if (!state.currentResult && state.recentResults.length) {
     const latest = normalizeRecentResult(state.recentResults[0]);
-    await selectResult(latest, latest.primaryView);
+    await selectResult(latest);
   }
 }
 
@@ -456,7 +443,7 @@ async function startJob() {
 
   els.runBtn.disabled = true;
   els.logOutput.textContent = "Submitting job...";
-  els.readerContent.textContent = "等待新的分析结果...";
+  els.readerContent.textContent = "等待新的汇总报告...";
   setChip(els.jobStatus, "queued", "muted");
 
   const payload = await fetchJson("/jobs", {

@@ -8,11 +8,11 @@ const runBtn = document.getElementById("runBtn");
 const openBtn = document.getElementById("openBtn");
 const statusEl = document.getElementById("status");
 const previewEl = document.getElementById("preview");
-const previewType = document.getElementById("previewType");
 const resultTitleEl = document.getElementById("resultTitle");
-const pathsEl = document.getElementById("paths");
+const resultMetaEl = document.getElementById("resultMeta");
 const healthChip = document.getElementById("healthChip");
 const tabMeta = document.getElementById("tabMeta");
+const selectionHeadline = document.getElementById("selectionHeadline");
 
 let currentJobId = null;
 let lastResult = null;
@@ -61,6 +61,28 @@ function getSelectedPrompts() {
   return Array.from(promptList.querySelectorAll("input:checked")).map((node) => node.dataset.name);
 }
 
+function getPrimaryView(result) {
+  const files = result?.files || result?.views || {};
+  return result?.primary_view || (files.report ? "report" : Object.keys(files)[0] || "report");
+}
+
+function getPrimaryFile(result) {
+  const files = result?.files || result?.views || {};
+  const primaryView = getPrimaryView(result);
+  return result?.primary_file || files[primaryView] || result?.report_file || null;
+}
+
+function getPrimaryPreview(result) {
+  const primaryView = getPrimaryView(result);
+  return result?.preview?.[primaryView] || result?.preview?.report || "No preview available.";
+}
+
+function getFileName(path) {
+  if (!path) return "";
+  const normalized = path.replace(/\//g, "\\");
+  return normalized.split("\\").pop();
+}
+
 async function saveConfig() {
   await chrome.storage.local.set({
     serverUrl: serverInput.value.trim(),
@@ -76,66 +98,22 @@ async function loadConfig() {
   cachedPrompts = Array.isArray(data.prompts) ? data.prompts : [];
 }
 
-function buildViewNames() {
-  const names = ["raw"];
-  const previewKeys = lastResult?.preview ? Object.keys(lastResult.preview) : [];
-  const recentKeys = lastRecent?.preview ? Object.keys(lastRecent.preview) : [];
-  [...previewKeys, ...recentKeys].forEach((name) => {
-    if (name && !names.includes(name)) {
-      names.push(name);
-    }
-  });
-  return names;
-}
-
-function renderPreviewOptions() {
-  previewType.innerHTML = "";
-  buildViewNames().forEach((name) => {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    previewType.appendChild(option);
-  });
-}
-
-function renderPaths(paths = {}) {
-  pathsEl.innerHTML = "";
-  Object.entries(paths).forEach(([label, path]) => {
-    if (!path) return;
-    const line = document.createElement("div");
-    line.className = "path-item";
-    line.textContent = `${label}: ${path}`;
-    pathsEl.appendChild(line);
-  });
-}
-
 function renderLatestResult() {
-  const activeView = previewType.value || "raw";
   const result = lastResult || lastRecent;
-
   if (!result) {
-    resultTitleEl.textContent = "No result yet";
-    previewEl.textContent = "Run a task or wait for the desktop app to generate outputs.";
-    renderPaths();
+    resultTitleEl.textContent = "暂无报告";
+    resultMetaEl.textContent = "最近生成的汇总报告会显示在这里。";
+    previewEl.textContent = "运行任务后，这里会展示报告预览。";
     return;
   }
 
-  resultTitleEl.textContent = result.title || "Latest result";
-  previewEl.textContent =
-    result.preview?.[activeView] ||
-    result.preview?.[result.primary_view] ||
-    "No preview available.";
+  resultTitleEl.textContent = result.title || "Latest report";
 
-  const filePaths = lastResult
-    ? {
-        raw: lastResult.raw_file,
-        ...(lastResult.optimized_files || {}),
-        ...(lastResult.report_file ? { report: lastResult.report_file } : {}),
-        ...(lastResult.artifacts_file ? { artifacts: lastResult.artifacts_file } : {}),
-      }
-    : lastRecent?.files || {};
-
-  renderPaths(filePaths);
+  const fileName = getFileName(getPrimaryFile(result));
+  resultMetaEl.textContent = fileName
+    ? `${formatDate(result.updated_at)} · ${fileName}`
+    : `${formatDate(result.updated_at)} · 汇总报告预览`;
+  previewEl.textContent = getPrimaryPreview(result);
 }
 
 async function loadHealth() {
@@ -161,7 +139,6 @@ async function loadRecentResult() {
   }
 
   lastRecent = resp.data.results?.[0] || null;
-  renderPreviewOptions();
   renderLatestResult();
 }
 
@@ -192,10 +169,7 @@ async function populatePrompts() {
     input.type = "checkbox";
     input.dataset.name = name;
     input.checked = cachedPrompts.includes(name) || (!cachedPrompts.length && name === "summary");
-    input.addEventListener("change", () => {
-      renderPreviewOptions();
-      saveConfig();
-    });
+    input.addEventListener("change", saveConfig);
 
     const text = document.createElement("span");
     text.textContent = name;
@@ -209,13 +183,15 @@ async function populatePrompts() {
 async function readCurrentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) {
+    selectionHeadline.textContent = "未找到当前标签页";
     tabMeta.textContent = "No active tab found.";
     return null;
   }
 
   const title = tab.title || "Untitled tab";
   const url = tab.url || "";
-  tabMeta.textContent = `${title}\n${url}`;
+  selectionHeadline.textContent = title;
+  tabMeta.textContent = url || "当前标签页没有可用 URL。";
   return tab;
 }
 
@@ -275,8 +251,7 @@ async function pollJob() {
     return;
   } else if (job.status === "succeeded") {
     setStatus("Completed.", "success");
-    lastResult = job.result || null;
-    renderPreviewOptions();
+    lastResult = job.result ? { ...job.result, updated_at: Date.now() / 1000 } : null;
     renderLatestResult();
     currentJobId = null;
     runBtn.disabled = false;
@@ -301,7 +276,6 @@ async function bootstrap() {
   await loadConfig();
   await Promise.all([populateModels(), populatePrompts(), loadHealth(), readCurrentTab()]);
   await loadRecentResult();
-  renderPreviewOptions();
   renderLatestResult();
 }
 
@@ -311,7 +285,6 @@ serverInput.addEventListener("change", () => {
   loadRecentResult();
 });
 modelSelect.addEventListener("change", saveConfig);
-previewType.addEventListener("change", renderLatestResult);
 runBtn.addEventListener("click", startJob);
 openBtn.addEventListener("click", openOutput);
 

@@ -81,8 +81,6 @@ select {
 .card-header-row,
 .reader-meta,
 .modal-actions,
-.result-files,
-.result-tabs,
 .source-switch,
 .status-grid {
   display: flex;
@@ -559,6 +557,11 @@ h3 {
 
 .reader-meta {
   justify-content: flex-end;
+}
+
+.reader-header > div:first-child .meta-copy {
+  display: block;
+  margin-top: 0.38rem;
 }
 
 .reader-body {

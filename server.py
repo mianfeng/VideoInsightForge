@@ -33,7 +33,7 @@ OUTPUT_DIR = _HERE / "output"
 UI_DIR = _HERE / "ui"
 WHISPER_MODELS = ["tiny", "base", "small"]
 VALID_SOURCE_KINDS = {"url", "local_video", "local_audio"}
-TEXT_VIEW_PRIORITY = ["summary", "evaluation", "format", "raw", "report"]
+TEXT_VIEW_PRIORITY = ["report", "summary", "evaluation", "format", "raw"]
 
 
 class JobRequest(BaseModel):
@@ -132,16 +132,16 @@ def _infer_source_kind(target: str, declared: Optional[str]) -> str:
 
 def _job_view_files(result: dict) -> dict:
     views = {}
+    report_file = result.get("report_file")
+    if report_file:
+        views["report"] = report_file
+
     raw_file = result.get("raw_file")
     if raw_file:
         views["raw"] = raw_file
 
     for name, path in (result.get("optimized_files") or {}).items():
         views[name] = path
-
-    report_file = result.get("report_file")
-    if report_file:
-        views["report"] = report_file
 
     artifacts_file = result.get("artifacts_file")
     if artifacts_file:
@@ -151,6 +151,7 @@ def _job_view_files(result: dict) -> dict:
 
 
 def _make_job_result(result: dict) -> dict:
+    views = _job_view_files(result)
     preview = {"raw": _preview_text(result.get("transcript_text", "") or "")}
     for name, text in (result.get("optimized_texts") or {}).items():
         preview[name] = _preview_text(text or "")
@@ -169,6 +170,10 @@ def _make_job_result(result: dict) -> dict:
         except Exception:
             pass
 
+    primary_view = next((name for name in TEXT_VIEW_PRIORITY if views.get(name)), None)
+    if not primary_view and views:
+        primary_view = next(iter(views))
+
     return {
         "title": result.get("title"),
         "platform": result.get("platform"),
@@ -179,7 +184,9 @@ def _make_job_result(result: dict) -> dict:
         "artifacts": result.get("artifacts_meta") or {},
         "pipeline": result.get("pipeline", "v2"),
         "preview": preview,
-        "views": _job_view_files(result),
+        "views": views,
+        "primary_view": primary_view,
+        "primary_file": views.get(primary_view) if primary_view else None,
     }
 
 
@@ -343,6 +350,7 @@ def _collect_recent_results(limit: int = 12) -> List[dict]:
                 "preview": previews,
                 "views": ordered_views,
                 "primary_view": primary_view,
+                "primary_file": group["files"].get(primary_view),
             }
         )
 
