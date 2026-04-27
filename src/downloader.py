@@ -9,8 +9,11 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from pathlib import Path
 
-import yt_dlp
-
+from download_config import (
+    extract_info_with_recovery,
+    load_project_config,
+    raise_bilibili_download_error,
+)
 from models import AudioDownloadResult, DownloadQuality
 from utils import get_data_dir, extract_video_id, get_logger
 
@@ -22,6 +25,14 @@ QUALITY_MAP = {
     "medium": "64",
     "slow": "128"
 }
+
+
+def _load_download_config() -> dict:
+    return load_project_config(logger=logger)
+
+
+def _raise_download_error(exc: Exception):
+    raise_bilibili_download_error(exc)
 
 
 class Downloader(ABC):
@@ -97,15 +108,23 @@ class BilibiliDownloader(Downloader):
             'quiet': False,
             'ffmpeg_location': r'D:\ffmpeg-master-latest-win64-gpl-shared\bin',
         }
-
         logger.info(f"开始下载 Bilibili 音频: {video_url}")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
+        try:
+            info = extract_info_with_recovery(
+                video_url=video_url,
+                ydl_opts=ydl_opts,
+                config=_load_download_config(),
+                platform="bilibili",
+                logger=logger,
+                download=True,
+            )
             video_id = info.get("id")
             title = info.get("title")
             duration = info.get("duration", 0)
             cover_url = info.get("thumbnail")
             audio_path = os.path.join(output_dir, f"{video_id}.mp3")
+        except Exception as exc:
+            _raise_download_error(exc)
 
         logger.info(f"音频下载完成: {audio_path}")
         return AudioDownloadResult(
@@ -147,12 +166,20 @@ class BilibiliDownloader(Downloader):
             'merge_output_format': 'mp4',
             'ffmpeg_location': r'D:\ffmpeg-master-latest-win64-gpl-shared\bin',
         }
-
         logger.info(f"开始下载 Bilibili 视频: {video_url}")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
+        try:
+            info = extract_info_with_recovery(
+                video_url=video_url,
+                ydl_opts=ydl_opts,
+                config=_load_download_config(),
+                platform="bilibili",
+                logger=logger,
+                download=True,
+            )
             video_id = info.get("id")
             video_path = os.path.join(output_dir, f"{video_id}.mp4")
+        except Exception as exc:
+            _raise_download_error(exc)
 
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件未找到: {video_path}")
@@ -196,15 +223,20 @@ class YoutubeDownloader(Downloader):
             'quiet': False,
             'ffmpeg_location': r'D:\ffmpeg-master-latest-win64-gpl-shared\bin',
         }
-
         logger.info(f"开始下载 YouTube 音频: {video_url}")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            video_id = info.get("id")
-            title = info.get("title")
-            duration = info.get("duration", 0)
-            cover_url = info.get("thumbnail")
-            audio_path = os.path.join(output_dir, f"{video_id}.mp3")
+        info = extract_info_with_recovery(
+            video_url=video_url,
+            ydl_opts=ydl_opts,
+            config=_load_download_config(),
+            platform="youtube",
+            logger=logger,
+            download=True,
+        )
+        video_id = info.get("id")
+        title = info.get("title")
+        duration = info.get("duration", 0)
+        cover_url = info.get("thumbnail")
+        audio_path = os.path.join(output_dir, f"{video_id}.mp3")
 
         logger.info(f"音频下载完成: {audio_path}")
         return AudioDownloadResult(
@@ -245,12 +277,17 @@ class YoutubeDownloader(Downloader):
             'merge_output_format': 'mp4',
             'ffmpeg_location': r'D:\ffmpeg-master-latest-win64-gpl-shared\bin',
         }
-
         logger.info(f"开始下载 YouTube 视频: {video_url}")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            video_id = info.get("id")
-            video_path = os.path.join(output_dir, f"{video_id}.mp4")
+        info = extract_info_with_recovery(
+            video_url=video_url,
+            ydl_opts=ydl_opts,
+            config=_load_download_config(),
+            platform="youtube",
+            logger=logger,
+            download=True,
+        )
+        video_id = info.get("id")
+        video_path = os.path.join(output_dir, f"{video_id}.mp4")
 
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件未找到: {video_path}")

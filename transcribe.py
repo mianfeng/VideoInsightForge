@@ -9,6 +9,7 @@
 - 支持本地视频文件
 """
 import os
+import shutil
 import sys
 import json
 import logging
@@ -19,9 +20,9 @@ from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 
-import yt_dlp
 from faster_whisper import WhisperModel
 from modelscope import snapshot_download
+from src.download_config import extract_info_with_recovery, raise_bilibili_download_error
 from src.pipeline import V2PipelineOrchestrator
 
 # ==================== 配置 ====================
@@ -41,6 +42,10 @@ PIPELINE_PROMPTS_DIR.mkdir(exist_ok=True)
 Path("logs").mkdir(exist_ok=True)
 
 # 日志配置
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -209,6 +214,21 @@ def get_media_title(path: str) -> str:
             return title.strip()
     return Path(path).stem
 
+def get_media_duration_seconds(path: str) -> Optional[float]:
+    """读取音频/视频时长（秒）"""
+    info = _ffprobe_json(path, ["-show_entries", "format=duration", "-of", "json"])
+    if not info or not isinstance(info, dict):
+        return None
+
+    try:
+        duration = info.get("format", {}).get("duration")
+        if duration is None:
+            return None
+        value = float(duration)
+        return value if value > 0 else None
+    except (TypeError, ValueError):
+        return None
+
 # ==================== 提示词管理 ====================
 def list_available_prompts() -> List[str]:
     """列出所有可用的提示词"""
@@ -269,6 +289,9 @@ def _get_pipeline_config(config: dict) -> dict:
     out["enable_parallel"] = bool(out.get("enable_parallel", True))
     return out
 
+def _raise_download_error(exc: Exception):
+    raise_bilibili_download_error(exc)
+
 def _get_llm_limits(config: dict) -> Tuple[int, int, int]:
     """返回 (long_input_tokens, chunk_tokens, chunk_overlap_tokens)"""
     llm_cfg = (config or {}).get("llm", {})
@@ -276,6 +299,128 @@ def _get_llm_limits(config: dict) -> Tuple[int, int, int]:
     chunk_tokens = int(llm_cfg.get("chunk_tokens", 1800))
     chunk_overlap_tokens = int(llm_cfg.get("chunk_overlap_tokens", 200))
     return long_input_tokens, chunk_tokens, chunk_overlap_tokens
+
+def _get_transcribe_runtime_config(config: dict) -> Tuple[bool, int, int]:
+    """返回 (auto_optimize, split_threshold_minutes, chunk_minutes)"""
+    transcribe_cfg = (config or {}).get("transcribe", {}) or {}
+    auto_optimize = bool(transcribe_cfg.get("auto_optimize", True))
+    split_threshold_minutes = max(1, int(transcribe_cfg.get("long_audio_split_threshold_minutes", 20)))
+    chunk_minutes = max(1, int(transcribe_cfg.get("long_audio_chunk_minutes", 20)))
+    chunk_minutes = min(chunk_minutes, split_threshold_minutes)
+    return auto_optimize, split_threshold_minutes, chunk_minutes
+
+def _format_timeline_label(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds or 0)))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+def _preview_for_timeline(text: str, limit: int = 90) -> str:
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[:limit].rstrip() + "..."
+
+def _build_timeline_entries(
+    transcript_segments: List[Dict[str, object]],
+    min_seconds: int = 60,
+    max_seconds: int = 180,
+    max_chars: int = 900,
+) -> List[Dict[str, object]]:
+    entries: List[Dict[str, object]] = []
+    current: List[Dict[str, object]] = []
+
+    def flush_current():
+        if not current:
+            return
+        start = float(current[0].get("start", 0) or 0)
+        end = float(current[-1].get("end", start) or start)
+        text = " ".join(str(item.get("text", "")).strip() for item in current if item.get("text")).strip()
+        if not text:
+            current.clear()
+            return
+        index = len(entries) + 1
+        entries.append(
+            {
+                "index": index,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "start_label": _format_timeline_label(start),
+                "end_label": _format_timeline_label(end),
+                "title": f"阶段 {index}",
+                "text": text,
+                "summary": f"- 该阶段主要内容：{_preview_for_timeline(text)}",
+            }
+        )
+        current.clear()
+
+    for segment in transcript_segments:
+        text = str(segment.get("text", "")).strip()
+        if not text:
+            continue
+        current.append(segment)
+        start = float(current[0].get("start", 0) or 0)
+        end = float(current[-1].get("end", start) or start)
+        current_text_len = sum(len(str(item.get("text", ""))) for item in current)
+        duration = max(0.0, end - start)
+        if duration >= max_seconds or (duration >= min_seconds and current_text_len >= max_chars):
+            flush_current()
+
+    flush_current()
+    return entries
+
+def _timeline_entries_to_prompt(entries: List[Dict[str, object]]) -> str:
+    parts = []
+    for entry in entries:
+        parts.extend(
+            [
+                f"### {entry['start_label']} - {entry['end_label']}",
+                str(entry.get("text", "")).strip(),
+                "",
+            ]
+        )
+    return "\n".join(parts).strip()
+
+def _render_basic_timeline_markdown(entries: List[Dict[str, object]]) -> str:
+    if not entries:
+        return "暂无可用的语音时间线。"
+    parts = []
+    for entry in entries:
+        parts.extend(
+            [
+                f"### {entry['start_label']} - {entry['end_label']}｜{entry.get('title', '阶段')}",
+                str(entry.get("summary", "")).strip() or f"- 该阶段主要内容：{_preview_for_timeline(str(entry.get('text', '')))}",
+                "",
+            ]
+        )
+    return "\n".join(parts).strip()
+
+def _apply_timeline_markdown_to_entries(entries: List[Dict[str, object]], markdown: str):
+    if not entries or not markdown:
+        return
+
+    active_index = -1
+    sections: List[List[str]] = []
+    for line in markdown.splitlines():
+        if line.startswith("### "):
+            active_index += 1
+            sections.append([line])
+            continue
+        if active_index >= 0:
+            sections[active_index].append(line)
+
+    for entry, section_lines in zip(entries, sections):
+        heading = section_lines[0].lstrip("#").strip() if section_lines else ""
+        body = "\n".join(section_lines[1:]).strip()
+        if "｜" in heading:
+            entry["title"] = heading.split("｜", 1)[1].strip() or entry.get("title", "")
+        elif "|" in heading:
+            entry["title"] = heading.split("|", 1)[1].strip() or entry.get("title", "")
+        if body:
+            entry["summary"] = body
 
 def optimize_text_with_pipeline_prompt(text: str, config: dict, prompt_name: str) -> Optional[str]:
     prompt_template = load_pipeline_prompt(prompt_name)
@@ -299,6 +444,7 @@ def download_audio(video_url: str) -> tuple[str, str]:
     """下载视频音频"""
     start_time = time.time()
     logger.info(f"开始下载音频: {video_url}")
+    config = load_config()
 
     output_template = str(DATA_DIR / "%(id)s.%(ext)s")
 
@@ -315,12 +461,20 @@ def download_audio(video_url: str) -> tuple[str, str]:
         'no_warnings': True,
         'ffmpeg_location': r'D:\ffmpeg-master-latest-win64-gpl-shared\bin',
     }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=True)
+    try:
+        info = extract_info_with_recovery(
+            video_url=video_url,
+            ydl_opts=ydl_opts,
+            config=config,
+            platform=detect_platform(video_url),
+            logger=logger,
+            download=True,
+        )
         video_id = info.get("id")
         title = info.get("title", "未知标题")
         audio_path = str(DATA_DIR / f"{video_id}.mp3")
+    except Exception as exc:
+        _raise_download_error(exc)
 
     elapsed = time.time() - start_time
     logger.info(f"音频下载完成: {title} (耗时: {format_time(elapsed)})")
@@ -360,8 +514,9 @@ def extract_audio_from_local_video(video_path: str, quality: str = "fast") -> tu
             '-i', video_path,
             '-vn',  # 不处理视频
             '-acodec', 'libmp3lame',
+            '-ac', '1',
             '-ab', f'{bitrate}k',
-            '-ar', '44100',
+            '-ar', '16000',
             '-y',  # 覆盖已存在的文件
             audio_path
         ]
@@ -389,9 +544,11 @@ def transcribe_audio(
     audio_path: str,
     model_size: str = "tiny",
     cpu_threads: int = 4
-) -> str:
+) -> Dict[str, object]:
     """转写音频为文本"""
     start_time = time.time()
+    config = load_config()
+    auto_optimize, split_threshold_minutes, chunk_minutes = _get_transcribe_runtime_config(config)
     model_path = MODEL_DIR / f"whisper-{model_size}"
 
     # 下载模型（如果不存在）
@@ -423,18 +580,119 @@ def transcribe_audio(
     load_elapsed = time.time() - load_start
     logger.info(f"模型加载完成 (耗时: {format_time(load_elapsed)})")
 
+    def _transcribe_inputs(paths: List[str]) -> Tuple[str, List[Dict[str, object]], int]:
+        texts: List[str] = []
+        timed_segments: List[Dict[str, object]] = []
+        total_segments = 0
+        total_inputs = len(paths)
+        offset_seconds = 0.0
+
+        for idx, path in enumerate(paths, 1):
+            if total_inputs > 1:
+                logger.info(f"开始转写分片 {idx}/{total_inputs}: {Path(path).name}")
+
+            chunk_parts: List[str] = []
+            segments_generator, _ = model.transcribe(path, language="zh")
+            chunk_segments = 0
+            chunk_offset = offset_seconds if total_inputs > 1 else 0.0
+            for segment in segments_generator:
+                text = segment.text.strip()
+                if text:
+                    chunk_parts.append(text)
+                    timed_segments.append(
+                        {
+                            "start": round(float(segment.start) + chunk_offset, 3),
+                            "end": round(float(segment.end) + chunk_offset, 3),
+                            "text": text,
+                        }
+                    )
+                chunk_segments += 1
+
+            texts.append(" ".join(chunk_parts).strip())
+            total_segments += chunk_segments
+
+            if total_inputs > 1:
+                logger.info(f"分片 {idx}/{total_inputs} 转写完成: {chunk_segments} 段")
+                offset_seconds += get_media_duration_seconds(path) or chunk_seconds
+
+        merged_text = " ".join(text for text in texts if text).strip()
+        return merged_text, timed_segments, total_segments
+
+    def _split_audio_for_transcription(path: str, chunk_seconds: int) -> Tuple[List[str], Path]:
+        source = Path(path)
+        chunk_dir = DATA_DIR / "chunks" / f"{source.stem}_{int(time.time())}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        output_pattern = chunk_dir / "chunk_%03d.mp3"
+        cmd = [
+            'ffmpeg',
+            '-i', path,
+            '-map', '0:a:0',
+            '-f', 'segment',
+            '-segment_time', str(chunk_seconds),
+            '-reset_timestamps', '1',
+            '-ac', '1',
+            '-ar', '16000',
+            '-c:a', 'libmp3lame',
+            '-b:a', '64k',
+            '-y',
+            str(output_pattern)
+        ]
+        try:
+            subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            shutil.rmtree(chunk_dir, ignore_errors=True)
+            logger.error(f"音频切片失败: {e.stderr.decode('utf-8', errors='ignore')}")
+            raise RuntimeError(f"FFmpeg 音频切片失败: {e}")
+        except FileNotFoundError:
+            shutil.rmtree(chunk_dir, ignore_errors=True)
+            raise RuntimeError("FFmpeg 未安装或不在 PATH 中,请先安装 FFmpeg")
+
+        chunk_paths = sorted(str(p) for p in chunk_dir.glob("chunk_*.mp3"))
+        if not chunk_paths:
+            shutil.rmtree(chunk_dir, ignore_errors=True)
+            raise RuntimeError("音频切片失败: 未生成任何分片文件")
+        return chunk_paths, chunk_dir
+
+    duration_seconds = get_media_duration_seconds(audio_path)
+    cleanup_dir: Optional[Path] = None
+    transcription_inputs = [audio_path]
+    threshold_seconds = split_threshold_minutes * 60
+    chunk_seconds = chunk_minutes * 60
+    if auto_optimize and duration_seconds and duration_seconds > threshold_seconds:
+        logger.info(
+            "检测到长音频: %.1f 分钟，自动切片为 %d 分钟/段后再转写",
+            duration_seconds / 60.0,
+            chunk_minutes
+        )
+        transcription_inputs, cleanup_dir = _split_audio_for_transcription(audio_path, chunk_seconds)
+
     # 转写
     logger.info("开始转写音频...")
     transcribe_start = time.time()
-    segments_generator, info = model.transcribe(audio_path, language="zh")
+    try:
+        full_text, transcript_segments, segment_count = _transcribe_inputs(transcription_inputs)
+    except Exception as e:
+        should_retry_with_chunks = (
+            auto_optimize
+            and cleanup_dir is None
+            and chunk_seconds > 0
+            and "Unable to allocate" in str(e)
+        )
+        if not should_retry_with_chunks:
+            raise
 
-    full_text = ""
-    segment_count = 0
-    for segment in segments_generator:
-        full_text += segment.text.strip() + " "
-        segment_count += 1
+        logger.warning("检测到转写内存不足，改为自动切片后重试...")
+        transcription_inputs, cleanup_dir = _split_audio_for_transcription(audio_path, chunk_seconds)
+        full_text, transcript_segments, segment_count = _transcribe_inputs(transcription_inputs)
+    finally:
+        if cleanup_dir is not None:
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
 
-    full_text = full_text.strip()
     transcribe_elapsed = time.time() - transcribe_start
     logger.info(f"转写完成: {segment_count} 段 (耗时: {format_time(transcribe_elapsed)})")
 
@@ -442,12 +700,18 @@ def transcribe_audio(
     logger.info("繁简转换...")
     convert_start = time.time()
     full_text = traditional_to_simplified(full_text)
+    for segment in transcript_segments:
+        segment["text"] = traditional_to_simplified(str(segment.get("text", "")))
     convert_elapsed = time.time() - convert_start
     logger.info(f"繁简转换完成 (耗时: {format_time(convert_elapsed)})")
 
     total_elapsed = time.time() - start_time
     logger.info(f"转写总耗时: {format_time(total_elapsed)}, 共 {len(full_text)} 字符")
-    return full_text
+    return {
+        "text": full_text,
+        "segments": transcript_segments,
+        "segment_count": segment_count,
+    }
 
 # ==================== 大模型文本优化 ====================
 def _safe_render_prompt(prompt_template: str, text: str) -> str:
@@ -652,6 +916,7 @@ def _build_single_markdown_report(
     artifacts_data: Optional[dict],
     artifacts_meta: dict,
     total_elapsed: float,
+    timeline_markdown: str = "",
 ) -> str:
     app_outputs = ((artifacts_data or {}).get("application_outputs") or {}) if artifacts_data else {}
     quick_summary = (app_outputs.get("quick_summary") or "").strip()
@@ -666,6 +931,8 @@ def _build_single_markdown_report(
     ]
     if quick_summary:
         toc_entries.append(("quick-summary", "快速摘要"))
+    if timeline_markdown:
+        toc_entries.append(("timeline", "视频时间线"))
     if summary:
         toc_entries.append(("summary", "详细总结"))
     if evaluation:
@@ -704,6 +971,17 @@ def _build_single_markdown_report(
                 "## 快速摘要",
                 "",
                 quick_summary,
+            ]
+        )
+
+    if timeline_markdown:
+        parts.extend(
+            [
+                "",
+                '<a id="timeline"></a>',
+                "## 视频时间线",
+                "",
+                timeline_markdown,
             ]
         )
 
@@ -838,10 +1116,15 @@ def process_video(
     # 2. 转写音频
     print("\n🎤 步骤 2: 转写音频...")
     try:
-        transcript_text = transcribe_audio(audio_path, model_size, cpu_threads)
+        transcript_result = transcribe_audio(audio_path, model_size, cpu_threads)
+        transcript_text = str(transcript_result.get("text", "")).strip()
+        transcript_segments = transcript_result.get("segments", []) or []
     except Exception as e:
         logger.error(f"转写失败: {e}")
         return {"success": False, "error": str(e), "video_url": video_url, "title": title}
+
+    timeline_entries = _build_timeline_entries(transcript_segments)
+    timeline_markdown = _render_basic_timeline_markdown(timeline_entries)
 
     # 3. 大模型优化（可选，支持多提示词链式处理）
     optimized_texts = {}
@@ -865,6 +1148,23 @@ def process_video(
         if "format" in optimized_texts:
             formatted_text = optimized_texts["format"]
         print("   - 已完成 V2 Orchestrator 流水线")
+
+    if artifacts_data is None:
+        artifacts_data = {}
+    artifacts_data["transcript_segments"] = transcript_segments
+    artifacts_data["timeline"] = timeline_entries
+
+    if enable_llm_optimization and prompt_names and timeline_entries:
+        timeline_input = _timeline_entries_to_prompt(timeline_entries)
+        timeline_output = optimize_text_with_pipeline_prompt(timeline_input, config, "timeline")
+        if timeline_output:
+            timeline_markdown = timeline_output.strip()
+            _apply_timeline_markdown_to_entries(timeline_entries, timeline_markdown)
+            artifacts_data["timeline_markdown"] = timeline_markdown
+        else:
+            artifacts_data["timeline_markdown"] = timeline_markdown
+    else:
+        artifacts_data["timeline_markdown"] = timeline_markdown
 
     # 4. 保存结果
     print("\n💾 步骤 4: 保存结果...")
@@ -893,13 +1193,16 @@ def process_video(
         artifacts_data=artifacts_data,
         artifacts_meta=artifacts_meta,
         total_elapsed=time.time() - total_start,
+        timeline_markdown=timeline_markdown,
     )
     with open(report_file, "w", encoding="utf-8") as f:
         f.write(report_content)
 
     raw_file = None
     optimized_files = {}
-    artifacts_file = None
+    artifacts_file = OUTPUT_DIR / f"{output_prefix}_artifacts.json"
+    with open(artifacts_file, "w", encoding="utf-8") as f:
+        json.dump(artifacts_data, f, ensure_ascii=False, indent=2)
 
     save_elapsed = time.time() - save_start
     logger.info(f"结果保存完成 (耗时: {format_time(save_elapsed)})")
@@ -930,6 +1233,7 @@ def process_video(
         "report_file": str(report_file) if report_file else None,
         "artifacts_file": str(artifacts_file) if artifacts_file else None,
         "transcript_text": transcript_text,
+        "timeline": timeline_entries,
         "optimized_texts": optimized_texts,
         "artifacts_meta": artifacts_meta,
         "pipeline": active_pipeline,

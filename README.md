@@ -72,6 +72,16 @@ cp config.example.json config.json
     "model_size": "base",
     "cpu_threads": 4
   },
+  "download": {
+    "cookiefile": "data/bilibili-cookies.txt",
+    "cookie_string_file": "data/bilibili-cookie.txt",
+    "cookies_from_browser": "",
+    "human_like": true,
+    "http_headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      "Referer": "https://www.bilibili.com/"
+    }
+  },
   "pipeline": {
     "enable_parallel": true
   }
@@ -81,6 +91,20 @@ cp config.example.json config.json
 
 > 长视频（超过 `long_input_tokens`）会触发分块与分层汇总，成本与时长会增加。可根据模型上下文与预算调整 `chunk_tokens`。  
 > 90 分钟保证范围是“转写 + 清洗稳定完成”，summary/evaluation 为 best effort。
+
+### B 站 412 与拟人化下载
+
+工具会在 B 站下载前执行轻量预热：先访问视频页面，再尝试访问页面封面资源，并在请求之间加入 300-1200ms 随机延迟。下载 URL 会自动清理 `spm_id_from`、`vd_source` 等跟踪参数，只保留视频主路径和必要分页参数。
+
+如果 B 站仍返回 `HTTP Error 412: Precondition Failed`，程序会自动执行一次恢复重试，优先切换到有效 cookie 或浏览器 cookie。可选配置方式：
+
+- 将浏览器复制出来的整行 Cookie 字符串保存到 `data/bilibili-cookie.txt`。
+- 或导出 Netscape 格式 cookies 到 `data/bilibili-cookies.txt`。
+- 或在 `download.cookies_from_browser` 填 `edge` / `chrome` / `firefox` 后重试。浏览器 cookies 方式需要先关闭对应浏览器，否则 yt-dlp 可能无法复制 cookie 数据库。
+
+程序会校验 B 站 cookie 是否包含 `SESSDATA`、`DedeUserID`、`bili_jct` 等登录态字段。文件存在但缺少这些字段时会跳过该 cookie，并在日志中给出明确 warning。
+
+`data/` 已在 `.gitignore` 中，cookies 不会进入提交。
 
 ---
 
@@ -146,6 +170,7 @@ VideoInsightForge/
 ├── extension/          # 浏览器插件源码
 ├── src/                # 模块化组件库
 │   ├── downloader.py   # 媒体下载与提取
+│   ├── download_config.py # 下载配置、B 站预热与 412 恢复
 │   ├── transcriber.py  # ASR 转录封装
 │   ├── bilibili_search.py # B 站搜索集成
 │   ├── utils.py        # 工具函数
